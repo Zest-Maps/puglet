@@ -1,23 +1,27 @@
-# Weather Bot
+# Puglet
 
-A simple agent powered by OpenAI that integrates with Linear to provide current weather and time information. The bot is set up to be deployed to a Cloudflare worker.
+A simple Linear agent powered by OpenAI that mirrors a Linear task into a GitHub issue. The bot is deployed to a Cloudflare Worker.
 
-The bot can look up coordinates for cities, get current weather conditions, and provide local time information for any location. It responds to `AgentSession` webhooks from Linear and creates `AgentActivity` entries in response to prompts from users in Linear.
+When you ask the bot (in a Linear agent session) to create a GitHub issue — or to "triage" the task — it creates an issue in a single, pre-configured GitHub repository where:
+
+- the **title** is the Linear task's title, and
+- the **body** is the Linear task's URL.
+
+Creating that issue is what kicks off the downstream GitHub pipeline (which may open a pull request). The bot can only do this one thing right now: if asked for anything else, it replies that the only thing it can do is create a GitHub issue from the Linear task.
+
+It responds to `AgentSession` webhooks from Linear and creates `AgentActivity` entries in response to prompts from users in Linear.
 
 ## Tools Available
 
-The agent has access to three main tools:
+The agent has access to a single tool:
 
-1. **`getCoordinates(city_name)`** - Get coordinates for a city
-2. **`getWeather(lat, long)`** - Get current weather for given coordinates (latitude first, then longitude)
-3. **`getTime(lat, long)`** - Get current time for given coordinates (latitude first, then longitude)
+1. **`createGithubIssue()`** - Creates a GitHub issue in the configured repo. Takes no arguments; the title and body are pulled directly from the originating Linear task.
 
 ## Example Interactions
 
-- "What tools do you have access to?"
-- "What's the weather like in Paris?"
-- "What time is it in Tokyo?"
-- "Tell me about the weather and time in New York"
+- "Create a GitHub issue for this." → creates the issue
+- "Triage this task." → creates the issue (same action)
+- "What's the weather in Paris?" → "Sorry, the only thing I can do right now is create a GitHub issue from this Linear task."
 
 ## Architecture
 
@@ -29,7 +33,7 @@ src/
 ├── lib/
 │   ├── agent/
 │   │   ├── agentClient.ts # Main agent logic
-│   │   ├── tools.ts       # Tool implementations
+│   │   ├── tools.ts       # Tool implementations (GitHub issue creation)
 │   │   └── prompt.ts      # Prompt provided to LLM
 │   └── oauth.ts           # Linear OAuth handling
 │   └── types.ts           # TypeScript type definitions
@@ -42,6 +46,20 @@ src/
 - Cloudflare account
 - Linear workspace with permissions to create an OAuth app
 - OpenAI API key
+- A GitHub token that can create issues on the target repository (see below)
+
+### GitHub token
+
+The bot authenticates to the GitHub REST API with a token to create issues. You need **one** of:
+
+- **Fine-grained personal access token** (recommended) — scoped to the single
+  repository `Zest-Maps/ZestMaps-iOS`, with **Issues: Read and write** repository
+  permission. This is the most locked-down option.
+- **Classic personal access token** — with the `repo` scope (or `public_repo` if
+  the repo is public).
+
+Whichever you create, set it as the `GITHUB_TOKEN` secret (below). The target repo
+is configured via the `GITHUB_REPO` variable (`owner/repo`) in `wrangler.jsonc`.
 
 ### Cloudflare Worker Setup
 
@@ -52,18 +70,19 @@ src/
 
 2. **Configure Cloudflare environment**
 
-   * Set your `WORKER_URL` and `LINEAR_CLIENT_ID` variables in `wrangler.jsonc`
+   * Set your `WORKER_URL`, `LINEAR_CLIENT_ID`, and `GITHUB_REPO` variables in `wrangler.jsonc`
 
-   * Set the client secret, webhook secret, and OpenAI API key via wrangler
+   * Set the client secret, webhook secret, OpenAI API key, and GitHub token via wrangler
    ```
    wrangler secret put LINEAR_CLIENT_SECRET
    wrangler secret put LINEAR_WEBHOOK_SECRET
    wrangler secret put OPENAI_API_KEY
+   wrangler secret put GITHUB_TOKEN
    ```
 
    * Create a KV namespace and set its ID in `wrangler.jsonc` as well
    ```
-   wrangler kv namespace create "WEATHER_BOT_TOKENS"
+   wrangler kv namespace create "PUGLET_BOT_TOKENS"
    ```
 
 3. **Deploy**
@@ -81,7 +100,7 @@ src/
 
 ## Installation
 
-Once you've finished setting things up in both Linear and Cloudflare, visit `https://<your-worker-url>/oauth/authorize` to initiate OAuth between Weather Bot and Linear. This will install Weather Bot in your Linear workspace with an `actor=app` OAuth token.
+Once you've finished setting things up in both Linear and Cloudflare, visit `https://<your-worker-url>/oauth/authorize` to initiate OAuth between Puglet and Linear. This will install Puglet in your Linear workspace with an `actor=app` OAuth token.
 
 ## Development
 
@@ -99,15 +118,6 @@ npm run dev
 - `POST /webhook` - Endpoint that receives Linear webhooks for `AgentSession` and `AgentActivity` creation
 - `GET /oauth/authorize` - OAuth authorization endpoint
 - `GET /oauth/callback` - OAuth callback handler
-
-### Usage
-
-1. Fork the repository
-2. Create a feature branch
-3. Make changes as necessary
-    - Update the tools to different ones based on your use case
-    - Handle converting the agent's response into a Linear activity based on your custom prompt
-    - Handle additional webhooks involving your agent
 
 ## License
 

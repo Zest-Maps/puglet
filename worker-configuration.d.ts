@@ -9,6 +9,8 @@ declare namespace Cloudflare {
     WORKER_URL: string;
     LINEAR_WEBHOOK_SECRET: string;
     OPENAI_API_KEY: string;
+    GITHUB_TOKEN: string;
+    GITHUB_REPO: string;
   }
 }
 interface Env extends Cloudflare.Env {}

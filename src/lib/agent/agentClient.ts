@@ -1,24 +1,45 @@
 import OpenAI from "openai";
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
 import type { ChatCompletionMessageParam } from "openai/resources/index";
-import { getCoordinates, getWeather, getTime } from "./tools";
+import { createGithubIssue, findMatchingIssuesOrPrs } from "./tools";
 import { prompt } from "./prompt";
 import { Content, isToolName, ToolName, UnreachableCaseError } from "../types";
+
+/**
+ * The Linear task that the agent session is attached to. Its title and URL are
+ * used verbatim as the GitHub issue's title and body.
+ */
+export interface LinearIssueContext {
+  title: string;
+  url: string;
+}
 
 export class AgentClient {
   private linearClient: LinearClient;
   private openai: OpenAI;
+  private githubToken: string;
+  private githubRepo: string;
+  private issueContext: LinearIssueContext;
 
   // Maximum number of iterations for the agent to prevent infinite loops
   private MAX_ITERATIONS = 10;
 
-  constructor(linearAccessToken: string, openaiApiKey: string) {
+  constructor(
+    linearAccessToken: string,
+    openaiApiKey: string,
+    githubToken: string,
+    githubRepo: string,
+    issueContext: LinearIssueContext
+  ) {
     this.linearClient = new LinearClient({
       accessToken: linearAccessToken,
     });
     this.openai = new OpenAI({
       apiKey: openaiApiKey,
     });
+    this.githubToken = githubToken;
+    this.githubRepo = githubRepo;
+    this.issueContext = issueContext;
   }
 
   /**
@@ -170,7 +191,7 @@ export class AgentClient {
         return { type, body: response.replace(typeToKeyword[type], "").trim() };
       case L.AgentActivityType.Action:
         // Parse action parameters
-        const actionMatch = response.match(/ACTION:\s*(\w+)\(([^)]+)\)/);
+        const actionMatch = response.match(/ACTION:\s*(\w+)\(([^)]*)\)/);
         if (actionMatch) {
           const [, toolNameRaw, params] = actionMatch;
           if (!isToolName(toolNameRaw)) {
@@ -197,45 +218,40 @@ export class AgentClient {
     action: ToolName;
     parameter: string | null;
   }): Promise<string> {
-    const { action, parameter } = props;
-    if (!parameter) {
-      throw new Error("Parameter is required for action execution");
-    }
+    const { action } = props;
     switch (action) {
-      case "getCoordinates":
-        return JSON.stringify(
-          await getCoordinates(parameter.replace(/"/g, ""))
-        );
-      case "getWeather":
-        const paramParts = parameter
-          .split(",")
-          .map((p: string) => parseFloat(p.trim()));
-        if (
-          paramParts.length >= 2 &&
-          !isNaN(paramParts[0]) &&
-          !isNaN(paramParts[1])
-        ) {
-          const lat = paramParts[0]!;
-          const long = paramParts[1]!;
-          return JSON.stringify(await getWeather({ lat, long }));
-        } else {
-          throw new Error("Invalid parameter for getWeather action");
+      case "createGithubIssue": {
+        // Before creating, double-check the repo for an existing issue or PR
+        // that already matches this task, so we never create a duplicate.
+        const existing = await findMatchingIssuesOrPrs({
+          token: this.githubToken,
+          repo: this.githubRepo,
+          title: this.issueContext.title,
+          linearUrl: this.issueContext.url,
+        });
+
+        if ("error" in existing) {
+          // Couldn't verify — don't risk a duplicate. Report and let a human decide.
+          return `Could not verify whether a matching issue or pull request already exists, so no new issue was created: ${existing.error}. Please check GitHub manually or try again.`;
         }
-      case "getTime":
-        const timeParamParts = parameter
-          .split(",")
-          .map((p: string) => parseFloat(p.trim()));
-        if (
-          timeParamParts.length >= 2 &&
-          !isNaN(timeParamParts[0]) &&
-          !isNaN(timeParamParts[1])
-        ) {
-          const lat = timeParamParts[0]!;
-          const long = timeParamParts[1]!;
-          return await getTime({ lat, long });
-        } else {
-          throw new Error("Invalid parameter for getTime action");
+
+        if (existing.matches.length > 0) {
+          const list = existing.matches
+            .map((m) => `${m.isPr ? "PR" : "Issue"} "${m.title}" (${m.url})`)
+            .join("; ");
+          return `Did not create a new issue because ${existing.matches.length} existing item(s) already match this task: ${list}`;
         }
+
+        // The title and body are taken directly from the Linear task rather
+        // than from any LLM-provided parameter, so the mirrored issue always
+        // matches the source exactly.
+        return await createGithubIssue({
+          token: this.githubToken,
+          repo: this.githubRepo,
+          title: this.issueContext.title,
+          body: this.issueContext.url,
+        });
+      }
       default:
         throw new UnreachableCaseError(action);
     }
