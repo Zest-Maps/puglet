@@ -3,6 +3,17 @@ import { OAuthTokenResponse, StoredTokenData } from "./types";
 const OAUTH_TOKEN_KEY_PREFIX = "linear_oauth_token_";
 
 /**
+ * Build the OAuth redirect URI, tolerating a trailing slash on WORKER_URL.
+ * A double slash (e.g. ".../oauth/callback") won't match Linear's registered
+ * redirect URI and causes an "invalid redirect_uri" error.
+ * @param env - The environment variables.
+ * @returns The redirect URI.
+ */
+function getRedirectUri(env: Env): string {
+  return `${env.WORKER_URL.replace(/\/+$/, "")}/oauth/callback`;
+}
+
+/**
  * Generate a workspace-specific key for storing OAuth tokens
  * @param workspaceId - The Linear workspace ID
  * @returns The storage key
@@ -23,7 +34,7 @@ export function handleOAuthAuthorize(request: Request, env: Env): Response {
 
   const authUrl = new URL("https://linear.app/oauth/authorize");
   authUrl.searchParams.set("client_id", env.LINEAR_CLIENT_ID);
-  authUrl.searchParams.set("redirect_uri", `${env.WORKER_URL}/oauth/callback`);
+  authUrl.searchParams.set("redirect_uri", getRedirectUri(env));
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", scope);
   authUrl.searchParams.set("actor", "app");
@@ -70,7 +81,7 @@ export async function handleOAuthCallback(
         client_id: env.LINEAR_CLIENT_ID,
         client_secret: env.LINEAR_CLIENT_SECRET,
         code,
-        redirect_uri: `${env.WORKER_URL}/oauth/callback`,
+        redirect_uri: getRedirectUri(env),
       }),
     });
 
@@ -133,13 +144,13 @@ export async function getOAuthToken(
   env: Env,
   workspaceId: string
 ): Promise<string | null> {
-  if (!env.WEATHER_BOT_TOKENS) {
+  if (!env.PUGLET_BOT_TOKENS) {
     return null;
   }
 
   try {
     const key = getWorkspaceTokenKey(workspaceId);
-    const storedData = await env.WEATHER_BOT_TOKENS.get(key);
+    const storedData = await env.PUGLET_BOT_TOKENS.get(key);
 
     if (!storedData) {
       return null;
@@ -212,7 +223,7 @@ export async function setOAuthTokenData(
   workspaceId: string
 ): Promise<void> {
   const key = getWorkspaceTokenKey(workspaceId);
-  await env.WEATHER_BOT_TOKENS.put(key, JSON.stringify(tokenData));
+  await env.PUGLET_BOT_TOKENS.put(key, JSON.stringify(tokenData));
 }
 
 /**

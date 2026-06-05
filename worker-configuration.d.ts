@@ -3,7 +3,7 @@
 // Runtime types generated with workerd@1.20250508.0 2024-09-23 nodejs_compat
 declare namespace Cloudflare {
   interface Env {
-    WEATHER_BOT_TOKENS: KVNamespace;
+    PUGLET_BOT_TOKENS: KVNamespace;
     LINEAR_CLIENT_ID: string;
     LINEAR_CLIENT_SECRET: string;
     WORKER_URL: string;
