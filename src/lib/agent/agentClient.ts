@@ -106,7 +106,7 @@ export class AgentClient {
             type: L.AgentActivityType.Action,
             action: toolName,
             result: toolResult,
-            parameter: parameter || null,
+            parameter: parameter || "",
           };
           await this.linearClient.createAgentActivity({
             agentSessionId,
@@ -201,7 +201,9 @@ export class AgentClient {
           return {
             type,
             action: toolName,
-            parameter: params || null,
+            // Linear requires `parameter` to be a string; an action with no
+            // arguments must send "" rather than null, or the activity is rejected.
+            parameter: params || "",
           };
         }
       default:
@@ -267,7 +269,7 @@ export class AgentClient {
   ): Promise<string> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5.4-mini",
         messages,
       });
 

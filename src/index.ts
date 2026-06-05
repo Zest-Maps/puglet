@@ -135,9 +135,9 @@ export default {
     if (issueTitle && commentBody) {
       return `Issue: ${issueTitle}\n\nTask: ${commentBody}`;
     } else if (issueTitle) {
-      // The agent was delegated/assigned this task with no comment. Treat that
-      // as an implicit request to triage it (i.e. create the GitHub issue).
-      return `This Linear task was delegated to you with no comment. Triage it. Issue: ${issueTitle}`;
+      // The agent was delegated/assigned this task with no comment. Let the
+      // agent decide from the title whether it's small, in-scope iOS app work.
+      return `This Linear task was delegated to you with no comment. If it is small, client-side iOS app work (a bug fix, small UI change, or small feature), triage it; otherwise politely decline. Issue: ${issueTitle}`;
     } else if (commentBody) {
       return `Task: ${commentBody}`;
     }

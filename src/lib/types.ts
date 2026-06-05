@@ -18,7 +18,8 @@ export type Content =
   | {
       type: L.AgentActivityType.Action;
       action: ToolName;
-      parameter: string | null;
+      // Linear requires a string here; use "" for an action with no arguments.
+      parameter: string;
       result?: string;
     }
   | { type: L.AgentActivityType.Response; body: string }
