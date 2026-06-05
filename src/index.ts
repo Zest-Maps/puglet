@@ -19,7 +19,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/") {
-      return new Response("Weather bot says hello! 🌤️", { status: 200 });
+      return new Response("Puglet says hello! 🐶", { status: 200 });
     }
 
     // Handle OAuth authorize route
@@ -40,6 +40,14 @@ export default {
 
       if (!env.OPENAI_API_KEY) {
         return new Response("OpenAI API key not configured", { status: 500 });
+      }
+
+      if (!env.GITHUB_TOKEN) {
+        return new Response("GitHub token not configured", { status: 500 });
+      }
+
+      if (!env.GITHUB_REPO) {
+        return new Response("GitHub repo not configured", { status: 500 });
       }
 
       return this.handleWebhookWithEventListener(request, env, ctx);
@@ -97,7 +105,19 @@ export default {
       return;
     }
 
-    const agentClient = new AgentClient(token, env.OPENAI_API_KEY);
+    const issue = webhook.agentSession.issue;
+    const issueContext = {
+      title: issue?.title ?? "",
+      url: issue?.url ?? "",
+    };
+
+    const agentClient = new AgentClient(
+      token,
+      env.OPENAI_API_KEY,
+      env.GITHUB_TOKEN,
+      env.GITHUB_REPO,
+      issueContext
+    );
     const userPrompt = this.generateUserPrompt(webhook);
     await agentClient.handleUserPrompt(webhook.agentSession.id, userPrompt);
   },

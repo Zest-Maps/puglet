@@ -28,7 +28,7 @@ export type Content =
 /**
  * The name of a tool that can be executed by the agent
  */
-export type ToolName = "getCoordinates" | "getWeather" | "getTime";
+export type ToolName = "createGithubIssue";
 
 /**
  * Check if a string is a valid tool name
@@ -36,9 +36,7 @@ export type ToolName = "getCoordinates" | "getWeather" | "getTime";
  * @returns True if the string is a valid tool name, false otherwise
  */
 export const isToolName = (value: string): value is ToolName => {
-  return (
-    value === "getCoordinates" || value === "getWeather" || value === "getTime"
-  );
+  return value === "createGithubIssue";
 };
 
 /**

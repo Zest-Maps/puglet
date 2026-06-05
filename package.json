@@ -1,6 +1,6 @@
 {
-  "name": "weather-bot",
-  "description": "Weather bot that interacts with Linear",
+  "name": "puglet",
+  "description": "Linear agent that mirrors a Linear task into a GitHub issue",
   "version": "0.0.1",
   "scripts": {
     "dev": "wrangler dev",

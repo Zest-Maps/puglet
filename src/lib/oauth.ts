@@ -114,7 +114,7 @@ export async function handleOAuthCallback(
         <body>
           <h1>OAuth Authorization Successful!</h1>
           <p>Access token received and stored securely for workspace: <strong>${workspaceInfo.name}</strong></p>
-          <p>You can now interact with weather bot!</p>
+          <p>You can now interact with Puglet!</p>
         </body>
       </html>
     `,
