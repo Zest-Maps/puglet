@@ -66,8 +66,10 @@ export default {
       const webhookClient = new LinearWebhookClient(env.LINEAR_WEBHOOK_SECRET);
       const handler = webhookClient.createHandler();
 
-      handler.on("AgentSessionEvent", async (payload) => {
-        await this.handleAgentSessionEvent(payload, env, ctx);
+      handler.on("AgentSessionEvent", (payload) => {
+        // Don't await: hand the agent loop to waitUntil so we ack Linear
+        // immediately (within its webhook timeout) and finish in the background.
+        ctx.waitUntil(this.handleAgentSessionEvent(payload, env, ctx));
       });
 
       return await handler(request);

@@ -9,6 +9,9 @@ export const getCoordinates = async (
   { lat: number; lon: number; displayName: string } | { error: string }
 > => {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
         city_name
@@ -18,8 +21,11 @@ export const getCoordinates = async (
           "User-Agent": "Linear-Demo-Agent/1.0 (https://demo-agent.linear.dev)",
           Accept: "application/json",
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return {
@@ -64,9 +70,22 @@ export const getWeather = async (params: {
 }): Promise<string> => {
   const { lat, long } = params;
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${long}&current=temperature_2m,weathercode`
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${long}&current=temperature_2m,weathercode`,
+      {
+        signal: controller.signal,
+      }
     );
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return `Weather API error: ${response.status} ${response.statusText}`;
+    }
+
     const data = (await response.json()) as {
       current: { temperature_2m: number; weathercode: number };
     };

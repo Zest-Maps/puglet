@@ -58,7 +58,6 @@ export class AgentClient {
           messages.push({ role: "assistant", content: response });
 
           // Continue the loop for next cycle, until the task is complete or the maximum iteration count is reached
-          await new Promise((resolve) => setTimeout(resolve, 1000));
         } else if (content.type === L.AgentActivityType.Action) {
           const toolName = content.action;
           // PART 1: Create the action activity to inform the user that the agent is going to use the tool
@@ -94,7 +93,6 @@ export class AgentClient {
           });
 
           // Continue the loop for next cycle
-          await new Promise((resolve) => setTimeout(resolve, 1000));
         } else if (content.type === L.AgentActivityType.Response) {
           await this.linearClient.createAgentActivity({
             agentSessionId,
