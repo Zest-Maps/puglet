@@ -1,22 +1,22 @@
 {
-    "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "weather-bot",
-    "main": "src/index.ts",
-    "compatibility_date": "2024-09-23",
-    "compatibility_flags": [
-      "nodejs_compat"
-    ],
-    "kv_namespaces": [
-      {
-        "binding": "WEATHER_BOT_TOKENS",
-        "id": "<your-kv-namespace-id>",
-      },
-    ],
-    "observability": {
-      "enabled": true,
-    },
-    "vars": {
-      "LINEAR_CLIENT_ID": "<your-linear-client-id>",
-      "WORKER_URL": "<your-worker-url>"
-    }
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "puglet",
+	"main": "src/index.ts",
+	"compatibility_date": "2024-09-23",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"kv_namespaces": [
+		{
+			"binding": "PUGLET_BOT_TOKENS",
+			"id": "156429b54f47441cb698d6ad69c95467",
+		},
+	],
+	"observability": {
+		"enabled": true,
+	},
+	"vars": {
+		"LINEAR_CLIENT_ID": "591be4120ff9e9ee37d58b85243eff6b",
+		"WORKER_URL": "https://puglet.alex-572.workers.dev/"
+	}
+}
