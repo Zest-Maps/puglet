@@ -135,7 +135,9 @@ export default {
     if (issueTitle && commentBody) {
       return `Issue: ${issueTitle}\n\nTask: ${commentBody}`;
     } else if (issueTitle) {
-      return `Task: ${issueTitle}`;
+      // The agent was delegated/assigned this task with no comment. Treat that
+      // as an implicit request to triage it (i.e. create the GitHub issue).
+      return `This Linear task was delegated to you with no comment. Triage it. Issue: ${issueTitle}`;
     } else if (commentBody) {
       return `Task: ${commentBody}`;
     }

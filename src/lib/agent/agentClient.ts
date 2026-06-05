@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
 import type { ChatCompletionMessageParam } from "openai/resources/index";
-import { createGithubIssue } from "./tools";
+import { createGithubIssue, findMatchingIssuesOrPrs } from "./tools";
 import { prompt } from "./prompt";
 import { Content, isToolName, ToolName, UnreachableCaseError } from "../types";
 
@@ -220,7 +220,28 @@ export class AgentClient {
   }): Promise<string> {
     const { action } = props;
     switch (action) {
-      case "createGithubIssue":
+      case "createGithubIssue": {
+        // Before creating, double-check the repo for an existing issue or PR
+        // that already matches this task, so we never create a duplicate.
+        const existing = await findMatchingIssuesOrPrs({
+          token: this.githubToken,
+          repo: this.githubRepo,
+          title: this.issueContext.title,
+          linearUrl: this.issueContext.url,
+        });
+
+        if ("error" in existing) {
+          // Couldn't verify — don't risk a duplicate. Report and let a human decide.
+          return `Could not verify whether a matching issue or pull request already exists, so no new issue was created: ${existing.error}. Please check GitHub manually or try again.`;
+        }
+
+        if (existing.matches.length > 0) {
+          const list = existing.matches
+            .map((m) => `${m.isPr ? "PR" : "Issue"} "${m.title}" (${m.url})`)
+            .join("; ");
+          return `Did not create a new issue because ${existing.matches.length} existing item(s) already match this task: ${list}`;
+        }
+
         // The title and body are taken directly from the Linear task rather
         // than from any LLM-provided parameter, so the mirrored issue always
         // matches the source exactly.
@@ -230,6 +251,7 @@ export class AgentClient {
           title: this.issueContext.title,
           body: this.issueContext.url,
         });
+      }
       default:
         throw new UnreachableCaseError(action);
     }
