@@ -36,6 +36,12 @@ export class AgentClient {
     });
     this.openai = new OpenAI({
       apiKey: openaiApiKey,
+      // The SDK defaults are a 10-minute timeout with 2 retries, so a single
+      // slow/hung completion can wedge the agent loop for many minutes while
+      // Linear shows "creating…" with no progress. Bound it: a 30s cap per
+      // call, with one retry for transient errors (~60s absolute worst case).
+      timeout: 30_000,
+      maxRetries: 1,
     });
     this.githubToken = githubToken;
     this.githubRepo = githubRepo;
