@@ -7,8 +7,11 @@ export interface MatchingItem {
   isPr: boolean;
 }
 
+/** How many pages of 100 issues to scan before giving up (bounds cost). */
+const MAX_DEDUP_PAGES = 10;
+
 /**
- * Search the configured repository for existing issues or pull requests that
+ * Find existing issues or pull requests in the configured repository that
  * already match the Linear task, so we don't create a duplicate.
  *
  * Two complementary signals are used and merged:
@@ -18,10 +21,19 @@ export interface MatchingItem {
  *   2. The task title, which catches manually-created matches that don't
  *      reference the Linear URL.
  *
- * GitHub's `/search/issues` endpoint returns both issues and pull requests in
- * one call; an item is a PR when it has a `pull_request` field.
+ * We deliberately do NOT use GitHub's `/search/issues` endpoint here. That
+ * endpoint is backed by the global search index, which a fine-grained PAT
+ * scoped to a single private repo (the token type the README recommends)
+ * cannot read — it returns 422 "the listed repositories cannot be searched".
+ * Instead we page through `GET /repos/{repo}/issues`, which only needs
+ * Issues:read — the same permission the token already uses to create issues —
+ * and filter client-side. That endpoint returns PRs alongside issues; an item
+ * is a PR when it has a `pull_request` field.
  *
- * @param params.token - A GitHub token that can read issues and pull requests on the repo
+ * Coverage is bounded to MAX_DEDUP_PAGES (most-recently-updated first), which
+ * comfortably covers re-triage of a recent task; the cap is logged if hit.
+ *
+ * @param params.token - A GitHub token that can read issues on the repo
  * @param params.repo - The target repository as "owner/repo"
  * @param params.title - The Linear task title to match against issue/PR titles
  * @param params.linearUrl - The Linear task URL to match against issue/PR bodies
@@ -35,31 +47,22 @@ export const findMatchingIssuesOrPrs = async (params: {
 }): Promise<{ matches: MatchingItem[] } | { error: string }> => {
   const { token, repo, title, linearUrl } = params;
 
-  // Strip embedded double quotes so they don't break the quoted search phrase.
-  const safeTitle = title.replace(/"/g, "").trim();
-
-  const queries: string[] = [];
-  if (linearUrl) {
-    queries.push(`repo:${repo} "${linearUrl}"`);
-  }
-  if (safeTitle) {
-    queries.push(`repo:${repo} in:title "${safeTitle}"`);
-  }
+  const normalizedTitle = title.trim().toLowerCase();
 
   // Nothing to match on — treat as "no duplicates found" rather than erroring.
-  if (queries.length === 0) {
+  if (!normalizedTitle && !linearUrl) {
     return { matches: [] };
   }
 
   try {
     const byUrl = new Map<string, MatchingItem>();
 
-    for (const q of queries) {
+    for (let page = 1; page <= MAX_DEDUP_PAGES; page++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch(
-        `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=20`,
+        `https://api.github.com/repos/${repo}/issues?state=all&per_page=100&page=${page}&sort=updated&direction=desc`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -76,31 +79,50 @@ export const findMatchingIssuesOrPrs = async (params: {
       if (!response.ok) {
         const errorText = await response.text();
         return {
-          error: `GitHub search API error: ${response.status} ${response.statusText} - ${errorText}`,
+          error: `GitHub issues API error: ${response.status} ${response.statusText} - ${errorText}`,
         };
       }
 
-      const data = (await response.json()) as {
-        items?: {
-          html_url: string;
-          title: string;
-          pull_request?: unknown;
-        }[];
-      };
+      const items = (await response.json()) as {
+        html_url: string;
+        title: string;
+        body?: string | null;
+        pull_request?: unknown;
+      }[];
 
-      for (const item of data.items ?? []) {
-        byUrl.set(item.html_url, {
-          url: item.html_url,
-          title: item.title,
-          isPr: item.pull_request !== undefined,
-        });
+      for (const item of items) {
+        const titleMatches =
+          !!normalizedTitle && item.title.trim().toLowerCase() === normalizedTitle;
+        const urlMatches =
+          !!linearUrl && (item.body ?? "").includes(linearUrl);
+
+        if (titleMatches || urlMatches) {
+          byUrl.set(item.html_url, {
+            url: item.html_url,
+            title: item.title,
+            isPr: item.pull_request !== undefined,
+          });
+        }
+      }
+
+      // A short page means we've reached the end of the list.
+      if (items.length < 100) {
+        break;
+      }
+
+      if (page === MAX_DEDUP_PAGES) {
+        console.warn(
+          `findMatchingIssuesOrPrs: stopped after scanning ${MAX_DEDUP_PAGES} pages (${
+            MAX_DEDUP_PAGES * 100
+          } issues) of ${repo}; older items were not checked for duplicates.`
+        );
       }
     }
 
     return { matches: [...byUrl.values()] };
   } catch (error) {
     return {
-      error: `Failed to search GitHub: ${
+      error: `Failed to look up GitHub issues: ${
         error instanceof Error ? error.message : "Unknown error"
       }`,
     };
