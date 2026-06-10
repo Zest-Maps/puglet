@@ -18,7 +18,8 @@ export type Content =
   | {
       type: L.AgentActivityType.Action;
       action: ToolName;
-      // Linear requires a string here; use "" for an action with no arguments.
+      // The tool's argument (the free-text instruction for the estimate
+      // workflow). Linear requires a string here; use "" when there is none.
       parameter: string;
       result?: string;
     }
@@ -29,7 +30,7 @@ export type Content =
 /**
  * The name of a tool that can be executed by the agent
  */
-export type ToolName = "createGithubIssue";
+export type ToolName = "triggerEstimateWorkflow";
 
 /**
  * Check if a string is a valid tool name
@@ -37,7 +38,7 @@ export type ToolName = "createGithubIssue";
  * @returns True if the string is a valid tool name, false otherwise
  */
 export const isToolName = (value: string): value is ToolName => {
-  return value === "createGithubIssue";
+  return value === "triggerEstimateWorkflow";
 };
 
 /**

@@ -1,165 +1,44 @@
 /**
- * A GitHub issue or pull request that may match an existing task.
- */
-export interface MatchingItem {
-  url: string;
-  title: string;
-  isPr: boolean;
-}
-
-/** How many pages of 100 issues to scan before giving up (bounds cost). */
-const MAX_DEDUP_PAGES = 10;
-
-/**
- * Find existing issues or pull requests in the configured repository that
- * already match the Linear task, so we don't create a duplicate.
+ * Trigger the "Estimate Issue" GitHub Actions workflow for a Linear issue.
  *
- * Two complementary signals are used and merged:
- *   1. The Linear task URL, which Puglet writes into every issue body — this
- *      exactly catches anything already referencing this same Linear task
- *      (issues we created before, or PRs that mention it).
- *   2. The task title, which catches manually-created matches that don't
- *      reference the Linear URL.
+ * Fires a `repository_dispatch` event of type `pug-estimate` at the configured
+ * repository. The workflow (on the repo's default branch) is the single entry
+ * point for the automation: it validates the Linear issue, posts an
+ * "estimating" status note and a triage summary as comments on the Linear
+ * issue, applies `complexity:` / `effort:` / `autonomy:` labels, and — when
+ * the verdict is ai-can-fix — chains straight into the automated fix that
+ * opens a pull request.
  *
- * We deliberately do NOT use GitHub's `/search/issues` endpoint here. That
- * endpoint is backed by the global search index, which a fine-grained PAT
- * scoped to a single private repo (the token type the README recommends)
- * cannot read — it returns 422 "the listed repositories cannot be searched".
- * Instead we page through `GET /repos/{repo}/issues`, which only needs
- * Issues:read — the same permission the token already uses to create issues —
- * and filter client-side. That endpoint returns PRs alongside issues; an item
- * is a PR when it has a `pull_request` field.
+ * Re-dispatching the same issue is safe and intentional: the workflow
+ * serializes runs per Linear issue, and re-running (e.g. after answering
+ * clarifying questions, or after removing the `autonomy:needs-human` label to
+ * override a verdict) makes the new run read the full Linear thread.
  *
- * Coverage is bounded to MAX_DEDUP_PAGES (most-recently-updated first), which
- * comfortably covers re-triage of a recent task; the cap is logged if hit.
+ * Note: GitHub answers a dispatch with 204 No Content and gives no feedback
+ * about whether the workflow's own guard accepts the payload — so the caller
+ * must validate `linearIssueId` before calling this.
  *
- * @param params.token - A GitHub token that can read issues on the repo
+ * @param params.token - A GitHub token with contents:write on the repo
  * @param params.repo - The target repository as "owner/repo"
- * @param params.title - The Linear task title to match against issue/PR titles
- * @param params.linearUrl - The Linear task URL to match against issue/PR bodies
- * @returns The matching items, or an error string
+ * @param params.linearIssueId - The Linear issue identifier (e.g. "ZES-123")
+ * @param params.instruction - Optional free-text note from the agent session,
+ *   passed to the triage agent as requester context (may be empty)
+ * @returns A success message, or an error string
  */
-export const findMatchingIssuesOrPrs = async (params: {
+export const triggerEstimateWorkflow = async (params: {
   token: string;
   repo: string;
-  title: string;
-  linearUrl: string;
-}): Promise<{ matches: MatchingItem[] } | { error: string }> => {
-  const { token, repo, title, linearUrl } = params;
-
-  const normalizedTitle = title.trim().toLowerCase();
-
-  // Nothing to match on — treat as "no duplicates found" rather than erroring.
-  if (!normalizedTitle && !linearUrl) {
-    return { matches: [] };
-  }
-
-  try {
-    const byUrl = new Map<string, MatchingItem>();
-
-    for (let page = 1; page <= MAX_DEDUP_PAGES; page++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(
-        `https://api.github.com/repos/${repo}/issues?state=all&per_page=100&page=${page}&sort=updated&direction=desc`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "puglet-linear-agent",
-          },
-          signal: controller.signal,
-        }
-      );
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return {
-          error: `GitHub issues API error: ${response.status} ${response.statusText} - ${errorText}`,
-        };
-      }
-
-      const items = (await response.json()) as {
-        html_url: string;
-        title: string;
-        body?: string | null;
-        pull_request?: unknown;
-      }[];
-
-      for (const item of items) {
-        const titleMatches =
-          !!normalizedTitle && item.title.trim().toLowerCase() === normalizedTitle;
-        const urlMatches =
-          !!linearUrl && (item.body ?? "").includes(linearUrl);
-
-        if (titleMatches || urlMatches) {
-          byUrl.set(item.html_url, {
-            url: item.html_url,
-            title: item.title,
-            isPr: item.pull_request !== undefined,
-          });
-        }
-      }
-
-      // A short page means we've reached the end of the list.
-      if (items.length < 100) {
-        break;
-      }
-
-      if (page === MAX_DEDUP_PAGES) {
-        console.warn(
-          `findMatchingIssuesOrPrs: stopped after scanning ${MAX_DEDUP_PAGES} pages (${
-            MAX_DEDUP_PAGES * 100
-          } issues) of ${repo}; older items were not checked for duplicates.`
-        );
-      }
-    }
-
-    return { matches: [...byUrl.values()] };
-  } catch (error) {
-    return {
-      error: `Failed to look up GitHub issues: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`,
-    };
-  }
-};
-
-/**
- * Create a GitHub issue in the configured repository.
- *
- * The title and body are taken verbatim from the originating Linear task
- * (title -> issue title, Linear task URL -> issue body), so the agent never
- * has to retype them and the mirrored issue always matches the source.
- *
- * @param params.token - A GitHub token with permission to create issues on the repo
- * @param params.repo - The target repository as "owner/repo"
- * @param params.title - The GitHub issue title (the Linear task title)
- * @param params.body - The GitHub issue body (the Linear task URL)
- * @returns The URL of the created issue, or an error string
- */
-export const createGithubIssue = async (params: {
-  token: string;
-  repo: string;
-  title: string;
-  body: string;
+  linearIssueId: string;
+  instruction: string;
 }): Promise<string> => {
-  const { token, repo, title, body } = params;
-
-  if (!title) {
-    return "Error: no Linear task title available to use as the issue title.";
-  }
+  const { token, repo, linearIssueId, instruction } = params;
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch(
-      `https://api.github.com/repos/${repo}/issues`,
+      `https://api.github.com/repos/${repo}/dispatches`,
       {
         method: "POST",
         headers: {
@@ -169,22 +48,28 @@ export const createGithubIssue = async (params: {
           "Content-Type": "application/json",
           "User-Agent": "puglet-linear-agent",
         },
-        body: JSON.stringify({ title, body }),
+        body: JSON.stringify({
+          event_type: "pug-estimate",
+          client_payload: {
+            linear_issue: linearIssueId,
+            instruction,
+          },
+        }),
         signal: controller.signal,
       }
     );
 
     clearTimeout(timeoutId);
 
+    // A successful dispatch is 204 No Content — there is no body to parse.
     if (!response.ok) {
       const errorText = await response.text();
       return `GitHub API error: ${response.status} ${response.statusText} - ${errorText}`;
     }
 
-    const data = (await response.json()) as { html_url: string };
-    return `Created GitHub issue: ${data.html_url}`;
+    return `Estimate workflow triggered for ${linearIssueId}. The workflow will post its triage summary as a comment on the Linear issue shortly.`;
   } catch (error) {
-    return `Failed to create GitHub issue: ${
+    return `Failed to trigger the estimate workflow: ${
       error instanceof Error ? error.message : "Unknown error"
     }`;
   }

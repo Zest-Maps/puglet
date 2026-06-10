@@ -1,6 +1,6 @@
 {
   "name": "puglet",
-  "description": "Linear agent that mirrors a Linear task into a GitHub issue",
+  "description": "Linear agent that triages a Linear task by triggering the pug-estimate GitHub workflow",
   "version": "0.0.1",
   "scripts": {
     "dev": "wrangler dev",
