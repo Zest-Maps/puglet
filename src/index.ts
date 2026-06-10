@@ -107,8 +107,10 @@ export default {
 
     const issue = webhook.agentSession.issue;
     const issueContext = {
+      // The identifier (e.g. "ZES-123") is what the estimate workflow's
+      // repository_dispatch payload requires.
+      identifier: issue?.identifier ?? "",
       title: issue?.title ?? "",
-      url: issue?.url ?? "",
     };
 
     const agentClient = new AgentClient(

@@ -1,13 +1,18 @@
 # Puglet
 
-A simple Linear agent powered by OpenAI that mirrors a Linear task into a GitHub issue. The bot is deployed to a Cloudflare Worker.
+A simple Linear agent powered by OpenAI that triages a Linear task by triggering an automated estimate workflow in GitHub. The bot is deployed to a Cloudflare Worker.
 
-When you ask the bot (in a Linear agent session) to create a GitHub issue — or to "triage" the task — it creates an issue in a single, pre-configured GitHub repository where:
+When you ask the bot (in a Linear agent session) to "triage" the task, it fires a `repository_dispatch` event of type `pug-estimate` at a single, pre-configured GitHub repository:
 
-- the **title** is the Linear task's title, and
-- the **body** is the Linear task's URL.
+```
+POST https://api.github.com/repos/<owner>/<repo>/dispatches
+{ "event_type": "pug-estimate",
+  "client_payload": { "linear_issue": "ZES-123", "instruction": "<optional note>" } }
+```
 
-Creating that issue is what kicks off the downstream GitHub pipeline (which may open a pull request). The bot can only do this one thing right now: if asked for anything else, it replies that the only thing it can do is create a GitHub issue from the Linear task.
+That dispatch triggers the `Estimate Issue` workflow on the repo's default branch, which takes it from there: it analyzes the Linear task and the affected code, posts a triage summary (complexity, effort, and an AI-autonomy verdict) as a comment on the Linear issue, applies `complexity:` / `effort:` / `autonomy:` labels, and — when the verdict is `ai-can-fix` — chains straight into an automated fix that opens a pull request.
+
+Triaging the task (for small, client-side iOS app work only) and sharing dog facts are the only things the bot can do: if asked for anything else, it politely declines — with a dog fact.
 
 It responds to `AgentSession` webhooks from Linear and creates `AgentActivity` entries in response to prompts from users in Linear.
 
@@ -15,13 +20,17 @@ It responds to `AgentSession` webhooks from Linear and creates `AgentActivity` e
 
 The agent has access to a single tool:
 
-1. **`createGithubIssue()`** - Creates a GitHub issue in the configured repo. Takes no arguments; the title and body are pulled directly from the originating Linear task.
+1. **`triggerEstimateWorkflow(instruction)`** - Fires the `pug-estimate` repository dispatch for the originating Linear task. The Linear issue identifier (e.g. `ZES-123`) is pulled from the webhook payload; the optional `instruction` is a short free-text note the agent composes from any extra guidance the user gave in the session.
 
 ## Example Interactions
 
-- "Create a GitHub issue for this." → creates the issue
-- "Triage this task." → creates the issue (same action)
-- "What's the weather in Paris?" → "Sorry, the only thing I can do right now is create a GitHub issue from this Linear task."
+- "Triage this task." → triggers the estimate workflow
+- "Triage this, but keep the fix to the Settings screen." → triggers the workflow with that note as the instruction
+- "What's the weather in Paris?" → politely declines (with a dog fact)
+
+## Re-running
+
+Re-triggering is safe: the workflow serializes runs per Linear issue, and a re-run reads the full Linear thread. To override a `needs-human` verdict, remove the `autonomy:needs-human` label on the Linear issue and ask Puglet to triage again.
 
 ## Architecture
 
@@ -33,7 +42,7 @@ src/
 ├── lib/
 │   ├── agent/
 │   │   ├── agentClient.ts # Main agent logic
-│   │   ├── tools.ts       # Tool implementations (GitHub issue creation)
+│   │   ├── tools.ts       # Tool implementations (estimate workflow dispatch)
 │   │   └── prompt.ts      # Prompt provided to LLM
 │   └── oauth.ts           # Linear OAuth handling
 │   └── types.ts           # TypeScript type definitions
@@ -46,20 +55,25 @@ src/
 - Cloudflare account
 - Linear workspace with permissions to create an OAuth app
 - OpenAI API key
-- A GitHub token that can create issues on the target repository (see below)
+- A GitHub token that can send repository dispatches to the target repository (see below)
 
 ### GitHub token
 
-The bot authenticates to the GitHub REST API with a token to create issues. You need **one** of:
+The bot authenticates to the GitHub REST API with a token to fire the
+`repository_dispatch` event. You need **one** of:
 
 - **Fine-grained personal access token** (recommended) — scoped to the single
-  repository `Zest-Maps/ZestMaps-iOS`, with **Issues: Read and write** repository
-  permission. This is the most locked-down option.
+  repository `Zest-Maps/ZestMaps-iOS`, with **Contents: Read and write**
+  repository permission (this is what the dispatches endpoint requires). This is
+  the most locked-down option.
 - **Classic personal access token** — with the `repo` scope (or `public_repo` if
   the repo is public).
 
 Whichever you create, set it as the `GITHUB_TOKEN` secret (below). The target repo
 is configured via the `GITHUB_REPO` variable (`owner/repo`) in `wrangler.jsonc`.
+The `Estimate Issue` workflow (with `on: repository_dispatch: types: [pug-estimate]`)
+must exist on that repo's **default branch** — repository dispatches only trigger
+workflows from the default branch.
 
 ### Cloudflare Worker Setup
 

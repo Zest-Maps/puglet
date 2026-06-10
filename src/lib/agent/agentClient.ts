@@ -1,18 +1,26 @@
 import OpenAI from "openai";
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
 import type { ChatCompletionMessageParam } from "openai/resources/index";
-import { createGithubIssue, findMatchingIssuesOrPrs } from "./tools";
+import { triggerEstimateWorkflow } from "./tools";
 import { prompt } from "./prompt";
 import { Content, isToolName, ToolName, UnreachableCaseError } from "../types";
 
 /**
- * The Linear task that the agent session is attached to. Its title and URL are
- * used verbatim as the GitHub issue's title and body.
+ * The Linear task that the agent session is attached to. The identifier
+ * (e.g. "ZES-123") is what gets sent to the estimate workflow; the title is
+ * kept only as context for messages.
  */
 export interface LinearIssueContext {
+  identifier: string;
   title: string;
-  url: string;
 }
+
+/**
+ * The estimate workflow's guard rejects anything that doesn't look like a
+ * Linear identifier (e.g. "ZES-123") — and a repository_dispatch gives no
+ * feedback when that happens, so we validate before dispatching.
+ */
+const LINEAR_IDENTIFIER_REGEX = /^[A-Za-z][A-Za-z0-9]{0,9}-[0-9]+$/;
 
 export class AgentClient {
   private linearClient: LinearClient;
@@ -196,8 +204,14 @@ export class AgentClient {
       case L.AgentActivityType.Error:
         return { type, body: response.replace(typeToKeyword[type], "").trim() };
       case L.AgentActivityType.Action:
-        // Parse action parameters
-        const actionMatch = response.match(/ACTION:\s*(\w+)\(([^)]*)\)/);
+        // Parse action parameters. The argument is free text that may itself
+        // contain parentheses, so prefer matching through to the LAST closing
+        // paren at the end of the response; if the model added trailing prose
+        // after the call, fall back to a first-paren match so we still parse
+        // the action instead of erroring out.
+        const actionMatch =
+          response.match(/ACTION:\s*(\w+)\(([\s\S]*)\)\s*$/) ??
+          response.match(/ACTION:\s*(\w+)\(([^)]*)\)/);
         if (actionMatch) {
           const [, toolNameRaw, params] = actionMatch;
           if (!isToolName(toolNameRaw)) {
@@ -226,38 +240,24 @@ export class AgentClient {
     action: ToolName;
     parameter: string | null;
   }): Promise<string> {
-    const { action } = props;
+    const { action, parameter } = props;
     switch (action) {
-      case "createGithubIssue": {
-        // Before creating, double-check the repo for an existing issue or PR
-        // that already matches this task, so we never create a duplicate.
-        const existing = await findMatchingIssuesOrPrs({
-          token: this.githubToken,
-          repo: this.githubRepo,
-          title: this.issueContext.title,
-          linearUrl: this.issueContext.url,
-        });
-
-        if ("error" in existing) {
-          // Couldn't verify — don't risk a duplicate. Report and let a human decide.
-          return `Could not verify whether a matching issue or pull request already exists, so no new issue was created: ${existing.error}. Please check GitHub manually or try again.`;
+      case "triggerEstimateWorkflow": {
+        // The dispatch returns 204 regardless of what the workflow's guard
+        // thinks of the payload, so an invalid identifier would fail silently
+        // downstream. Catch it here and tell the user instead.
+        const identifier = this.issueContext.identifier;
+        if (!LINEAR_IDENTIFIER_REGEX.test(identifier)) {
+          return `Error: this agent session is not attached to a Linear issue with a valid identifier (got "${identifier}"), so the estimate workflow cannot be triggered.`;
         }
 
-        if (existing.matches.length > 0) {
-          const list = existing.matches
-            .map((m) => `${m.isPr ? "PR" : "Issue"} "${m.title}" (${m.url})`)
-            .join("; ");
-          return `Did not create a new issue because ${existing.matches.length} existing item(s) already match this task: ${list}`;
-        }
-
-        // The title and body are taken directly from the Linear task rather
-        // than from any LLM-provided parameter, so the mirrored issue always
-        // matches the source exactly.
-        return await createGithubIssue({
+        // The identifier comes from the webhook payload, never from the LLM;
+        // the only LLM-provided input is the free-text instruction.
+        return await triggerEstimateWorkflow({
           token: this.githubToken,
           repo: this.githubRepo,
-          title: this.issueContext.title,
-          body: this.issueContext.url,
+          linearIssueId: identifier,
+          instruction: (parameter ?? "").trim(),
         });
       }
       default:
