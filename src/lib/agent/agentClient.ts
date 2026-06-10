@@ -75,12 +75,29 @@ export class AgentClient {
 
     let taskComplete = false;
     let iterations = 0;
+    let previousResponse: string | null = null;
 
     while (!taskComplete && iterations < this.MAX_ITERATIONS) {
       iterations++;
 
       try {
         const response = await this.callOpenAI(messages);
+
+        // A verbatim repeat of the previous reply means the model is stuck;
+        // posting it again would only duplicate the activity in Linear.
+        if (response === previousResponse) {
+          await this.linearClient.createAgentActivity({
+            agentSessionId,
+            content: {
+              type: "error",
+              body: "The agent repeated itself and has stopped to avoid posting duplicate messages.",
+            },
+          });
+          taskComplete = true;
+          continue;
+        }
+        previousResponse = response;
+
         const content = this.mapResponseToLinearActivityContent(response);
 
         if (content.type === L.AgentActivityType.Thought) {
@@ -190,19 +207,34 @@ export class AgentClient {
       [L.AgentActivityType.Elicitation]: "ELICITATION:",
       [L.AgentActivityType.Error]: "ERROR:",
     } as const;
+    // The model occasionally decorates the keyword ("**RESPONSE:**", leading
+    // whitespace, lowercase), so strip leading markdown and match
+    // case-insensitively rather than requiring an exact prefix.
+    const normalized = response.trim().replace(/^[\s*_#`>]+/, "");
     const mappedType = Object.entries(typeToKeyword).find(([_, keyword]) =>
-      response.startsWith(keyword)
+      normalized.toUpperCase().startsWith(keyword)
     );
+    // A reply with no recognizable keyword is almost always the final answer
+    // with its prefix dropped. Defaulting to Thought would keep the loop
+    // running and re-post the same message every iteration, so default to
+    // Response (which ends the turn) instead.
     const type = mappedType?.[0]
       ? (mappedType[0] as L.AgentActivityType)
-      : L.AgentActivityType.Thought;
+      : L.AgentActivityType.Response;
 
     switch (type) {
       case L.AgentActivityType.Thought:
       case L.AgentActivityType.Response:
       case L.AgentActivityType.Elicitation:
-      case L.AgentActivityType.Error:
-        return { type, body: response.replace(typeToKeyword[type], "").trim() };
+      case L.AgentActivityType.Error: {
+        const body = mappedType
+          ? normalized
+              .slice(mappedType[1].length)
+              .replace(/^[\s*_`]+/, "")
+              .trim()
+          : response.trim();
+        return { type, body };
+      }
       case L.AgentActivityType.Action:
         // Parse action parameters. The argument is free text that may itself
         // contain parentheses, so prefer matching through to the LAST closing
@@ -210,8 +242,8 @@ export class AgentClient {
         // after the call, fall back to a first-paren match so we still parse
         // the action instead of erroring out.
         const actionMatch =
-          response.match(/ACTION:\s*(\w+)\(([\s\S]*)\)\s*$/) ??
-          response.match(/ACTION:\s*(\w+)\(([^)]*)\)/);
+          normalized.match(/^ACTION:[\s*_`]*(\w+)\(([\s\S]*)\)\s*$/i) ??
+          normalized.match(/^ACTION:[\s*_`]*(\w+)\(([^)]*)\)/i);
         if (actionMatch) {
           const [, toolNameRaw, params] = actionMatch;
           if (!isToolName(toolNameRaw)) {
